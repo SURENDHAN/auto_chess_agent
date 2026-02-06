@@ -142,9 +142,16 @@ class GameHandler(threading.Thread):
             if event['type'] == 'gameState':
                 self.handle_state_change(event)
             elif event['type'] == 'gameFull':
-                # gameFull contains 'state' nested inside, also save our color
                 self.my_color = 'white' if event['white'].get('id', '').lower() == 'surendhan' else 'black'
-                opponent = event['black']['username'] if self.my_color == 'white' else event['white']['username']
+                
+                # Safe opponent name extraction
+                if self.my_color == 'white':
+                    opp_info = event.get('black', {})
+                else:
+                    opp_info = event.get('white', {})
+                
+                opponent = opp_info.get('username', 'AI/Anonymous')
+                
                 print(f"♟️ Playing as: {self.my_color} vs {opponent}")
                 
                 # Update Telegram with opponent details
