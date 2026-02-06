@@ -20,9 +20,30 @@ client = berserk.Client(session=session)
 
 import platform
 import time
+import requests
 
 # --- 2. THE REASONING BRAIN (Stockfish) ---
 from stockfish import Stockfish
+
+# Telegram Settings
+TELEGRAM_TOKEN = os.getenv("telegram_token")
+TELEGRAM_CHAT_ID = os.getenv("telegram_chat_id")
+
+def send_telegram(message):
+    """Sends a notification to Telegram."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"⚠️ Telegram Failed: {e}")
 
 # Determine Stockfish path based on OS
 system = platform.system()
@@ -111,18 +132,24 @@ class GameHandler(threading.Thread):
 
     def run(self):
         print(f"🚀 Game Started! ID: {self.game_id}")
-        print(f"👀 Watch Live: https://lichess.org/{self.game_id}")
+        url = f"https://lichess.org/{self.game_id}"
+        print(f"👀 Watch Live: {url}")
         
-        # Send initial greeting
+        # Notify Telegram
+        send_telegram(f"🚀 **Game Started!**\nPlaying vs: Unknown\n[Watch Live]({url})")
 
-        
         for event in self.stream:
             if event['type'] == 'gameState':
                 self.handle_state_change(event)
             elif event['type'] == 'gameFull':
                 # gameFull contains 'state' nested inside, also save our color
                 self.my_color = 'white' if event['white'].get('id', '').lower() == 'surendhan' else 'black'
-                print(f"♟️ Playing as: {self.my_color}")
+                opponent = event['black']['username'] if self.my_color == 'white' else event['white']['username']
+                print(f"♟️ Playing as: {self.my_color} vs {opponent}")
+                
+                # Update Telegram with opponent details
+                send_telegram(f"♟️ **Playing as {self.my_color.title()}**\nVs: {opponent}\n[Watch Live]({url})")
+
                 if 'state' in event:
                     self.handle_state_change(event['state'])
                 else:
@@ -136,6 +163,13 @@ class GameHandler(threading.Thread):
         if moves_str:
             for move in moves_str.split():
                 self.board.push_uci(move)
+        
+        # Check Game Over
+        if self.board.is_game_over():
+            result = self.board.result()
+            print(f"🏁 Game Over: {result}")
+            send_telegram(f"🏁 **Game Over**\nResult: {result}\nMoves: {self.board.fullmove_number}")
+            return
         
         # --- DRAW OFFER LOGIC ---
         # Check if opponent offered a draw
