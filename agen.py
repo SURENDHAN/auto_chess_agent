@@ -41,9 +41,17 @@ def send_telegram(message):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=5)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"⚠️ Telegram Failed: {e}")
+
+# --- GLOBAL MEMORY ---
+# Stores: {'last_opponent': 'username', 'last_result': 'loss/win/draw'}
+BOT_MEMORY = {
+    'last_opponent': None,
+    'last_result': None,
+    'conquered_bots': set() # Bots we have beaten
+}
 
 # Determine Stockfish path based on OS
 system = platform.system()
@@ -68,15 +76,15 @@ class StockfishBrain:
     """
     def __init__(self):
         try:
-            # Using depth 22 for Grandmaster+ level
-            self.engine = Stockfish(path=STOCKFISH_PATH, depth=22, parameters={
+            # Using depth 24 for Maximum Strength
+            self.engine = Stockfish(path=STOCKFISH_PATH, depth=24, parameters={
                 "Threads": 2, 
-                "Hash": 64, 
-                "Contempt": 20, # Be aggressive, try to win
+                "Hash": 128, # Increased Hash for better performance 
+                "Contempt": 25, # More aggressive
                 "Minimum Thinking Time": 1000
             })
             self.engine.set_skill_level(20)
-            print("✅ Super Stockfish engine loaded successfully! (Depth: 22)")
+            print("✅ Super Stockfish engine loaded successfully! (Depth: 24, Hash: 128)")
         except Exception as e:
             print(f"❌ Failed to load Stockfish: {e}")
             self.engine = None
@@ -154,6 +162,9 @@ class GameHandler(threading.Thread):
                 
                 print(f"♟️ Playing as: {self.my_color} vs {opponent}")
                 
+                # Save opponent name to instance for later use
+                self.opponent_name = opponent
+                
                 # Update Telegram with opponent details
                 send_telegram(f"♟️ **Playing as {self.my_color.title()}**\nVs: {opponent}\n[Watch Live]({url})")
 
@@ -176,6 +187,31 @@ class GameHandler(threading.Thread):
             result = self.board.result()
             print(f"🏁 Game Over: {result}")
             send_telegram(f"🏁 **Game Over**\nResult: {result}\nMoves: {self.board.fullmove_number}")
+            
+            # Update Memory
+            if hasattr(self, 'opponent_name'):
+                BOT_MEMORY['last_opponent'] = self.opponent_name
+                
+                # Determine if we won/lost
+                # 1-0 means White wins. 0-1 means Black wins.
+                if result == "1-0":
+                    if self.my_color == 'white':
+                        BOT_MEMORY['last_result'] = 'win'
+                        BOT_MEMORY['conquered_bots'].add(self.opponent_name)
+                    else:
+                        BOT_MEMORY['last_result'] = 'loss'
+                elif result == "0-1":
+                    if self.my_color == 'black':
+                        BOT_MEMORY['last_result'] = 'win'
+                        BOT_MEMORY['conquered_bots'].add(self.opponent_name)
+                    else:
+                        BOT_MEMORY['last_result'] = 'loss'
+                else:
+                    BOT_MEMORY['last_result'] = 'draw'
+                
+                print(f"🧠 Memory Updated: Played {self.opponent_name}, Result: {BOT_MEMORY['last_result']}")
+                print(f"🏆 Conquered Bots: {list(BOT_MEMORY['conquered_bots'])}")
+            
             return
         
         # --- DRAW OFFER LOGIC ---
@@ -250,31 +286,82 @@ class ChallengeManager(threading.Thread):
                     time.sleep(60)
                     continue
 
-                # 2. Find bots to challenge
+                # 2. MATCHMAKING LOGIC
+                # Default: random bot from list
                 print("🔎 Auto-Challenger: Seeking opponents...")
-                online_bots = list(client.bots.get_online_bots(limit=20))
+                online_bots = list(client.bots.get_online_bots(limit=50))
                 
-                # Filter out ourselves and maybe really weak/strong bots if needed
+                # Filter out ourselves
                 valid_targets = [
                     bot for bot in online_bots 
                     if bot['username'].lower() != self.my_username.lower()
                 ]
-
+                
                 if not valid_targets:
                     print("🔎 Auto-Challenger: No bots found. Sleeping...")
                     time.sleep(60)
                     continue
 
-                # 3. Challenge a random one
-                target = random.choice(valid_targets)
-                target_name = target['username']
-                print(f"⚔️  Auto-Challenger: Challenging {target_name}...")
+                target_name = None
                 
-                try:
-                    # 3+0 Blitz game
-                    client.challenges.create(target_name, rated=True, clock_limit=180, clock_increment=0, color='random')
-                except Exception as e:
-                    print(f"⚠️ Challenge failed: {e}")
+                # REVENGE MODE: If we lost last game, try to find that bot
+                if BOT_MEMORY['last_result'] == 'loss' and BOT_MEMORY['last_opponent']:
+                    revenge_target = BOT_MEMORY['last_opponent']
+                    print(f"🔥 REVENGE MODE: Hunting for {revenge_target}...")
+                    
+                    # Check if they are online
+                    for bot in valid_targets:
+                        if bot['username'].lower() == revenge_target.lower():
+                            target_name = bot['username']
+                            print(f"⚔️ Found nemesis {target_name}! Challenging for revenge!")
+                            break
+                
+                if not target_name:
+                    # CONQUEROR MODE: Avoid bots we have beaten
+                    # Filter out conquered bots from potential targets
+                    fresh_targets = [
+                        b for b in valid_targets 
+                        if b['username'] not in BOT_MEMORY['conquered_bots']
+                    ]
+                    
+                    if fresh_targets:
+                        # VARIETY: Avoid last played opponent if possible
+                        if BOT_MEMORY['last_opponent']:
+                            ignored = BOT_MEMORY['last_opponent']
+                            very_fresh = [b for b in fresh_targets if b['username'].lower() != ignored.lower()]
+                            if very_fresh:
+                                target = random.choice(very_fresh)
+                                target_name = target['username']
+                                print(f"✨ Fresh Meat: Challenging {target_name} (New Opponent)")
+                            else:
+                                target = random.choice(fresh_targets)
+                                target_name = target['username']
+                                print(f"⚔️ Challenging {target_name} (Unbeaten)")
+                        else:
+                            target = random.choice(fresh_targets)
+                            target_name = target['username']
+                            print(f"⚔️ Challenging {target_name} (Unbeaten)")
+                    else:
+                        # FALLBACK: No new bots found. Play with tough old bots.
+                        print("⚠️ No fresh opponents found.")
+                        if valid_targets:
+                            # Just pick anyone (including conquered ones)
+                            target = random.choice(valid_targets)
+                            target_name = target['username']
+                            print(f"🔄 Fallback: Challenging {target_name} again (Old Rival)")
+                
+                # FINAL FALLBACK check
+                if not target_name and valid_targets:
+                     target = random.choice(valid_targets)
+                     target_name = target['username']
+                     print(f"🎲 Random Challenge: {target_name}")
+
+                if target_name:
+                    try:
+                        # 3+0 Blitz game
+                        client.challenges.create(target_name, rated=True, clock_limit=180, clock_increment=0, color='random')
+                    except Exception as e:
+                        print(f"⚠️ Challenge failed: {e}")
                 
                 # Wait before trying again
                 time.sleep(45)
