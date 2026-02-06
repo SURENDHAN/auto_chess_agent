@@ -29,10 +29,16 @@ system = platform.system()
 if system == "Windows":
     STOCKFISH_PATH = os.path.join(os.path.dirname(__file__), "stockfish", "stockfish-windows-x86-64-avx2.exe")
 else:
-    # On Linux (Railway), we expect stockfish to be installed in path
-    STOCKFISH_PATH = "/usr/games/stockfish"
-    # Fallback to just "stockfish" if not found there
-    if not os.path.exists(STOCKFISH_PATH):
+    # Linux (PythonAnywhere / Railway)
+    # 1. Check local folder first (common for PythonAnywhere)
+    local_binary = os.path.join(os.path.dirname(__file__), "stockfish")
+    if os.path.exists(local_binary):
+        STOCKFISH_PATH = local_binary
+    # 2. Check system install (common for Railway/Docker)
+    elif os.path.exists("/usr/games/stockfish"):
+        STOCKFISH_PATH = "/usr/games/stockfish"
+    # 3. Fallback to command line
+    else:
         STOCKFISH_PATH = "stockfish"
 
 class StockfishBrain:
