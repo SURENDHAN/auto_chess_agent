@@ -1,0 +1,4 @@
+python-chess
+berserk
+stockfish
+python-dotenv
