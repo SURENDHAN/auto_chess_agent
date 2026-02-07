@@ -146,41 +146,52 @@ class GameHandler(threading.Thread):
         # Notify Telegram
         send_telegram(f"🚀 **Game Started!**\nPlaying vs: Unknown\n[Watch Live]({url})")
 
-        for event in self.stream:
-            if event['type'] == 'gameState':
-                self.handle_state_change(event)
-            elif event['type'] == 'gameFull':
-                self.my_color = 'white' if event['white'].get('id', '').lower() == 'surendhan' else 'black'
-                
-                # Safe opponent name extraction
-                if self.my_color == 'white':
-                    opp_info = event.get('black', {})
-                else:
-                    opp_info = event.get('white', {})
-                
-                opponent = opp_info.get('username', 'AI/Anonymous')
-                
-                print(f"♟️ Playing as: {self.my_color} vs {opponent}")
-                
-                # Save opponent name to instance for later use
-                self.opponent_name = opponent
-                
-                # Update Telegram with opponent details
-                send_telegram(f"♟️ **Playing as {self.my_color.title()}**\nVs: {opponent}\n[Watch Live]({url})")
+        try:
+            for event in self.stream:
+                try:
+                    if event['type'] == 'gameState':
+                        self.handle_state_change(event)
+                    elif event['type'] == 'gameFull':
+                        self.my_color = 'white' if event['white'].get('id', '').lower() == 'surendhan' else 'black'
+                        
+                        # Safe opponent name extraction
+                        if self.my_color == 'white':
+                            opp_info = event.get('black', {})
+                        else:
+                            opp_info = event.get('white', {})
+                        
+                        opponent = opp_info.get('username', 'AI/Anonymous')
+                        
+                        print(f"♟️ Playing as: {self.my_color} vs {opponent}")
+                        
+                        # Save opponent name to instance for later use
+                        self.opponent_name = opponent
+                        
+                        # Update Telegram with opponent details
+                        send_telegram(f"♟️ **Playing as {self.my_color.title()}**\nVs: {opponent}\n[Watch Live]({url})")
 
-                if 'state' in event:
-                    self.handle_state_change(event['state'])
-                else:
-                    self.handle_state_change(event)
-    
+                        if 'state' in event:
+                            self.handle_state_change(event['state'])
+                        else:
+                            self.handle_state_change(event)
+                except Exception as inner_e:
+                    print(f"⚠️ Error processing game event: {inner_e}")
+                    continue
+        except Exception as e:
+            print(f"❌ Game Loop Error (ID: {self.game_id}): {e}")
+
     def handle_state_change(self, state):
         # Update internal board
         self.board = chess.Board()
         moves_str = state.get('moves', '')
         
         if moves_str:
-            for move in moves_str.split():
-                self.board.push_uci(move)
+            try:
+                for move in moves_str.split():
+                    self.board.push_uci(move)
+            except ValueError as ve:
+                print(f"⚠️ Invalid move received: {ve}")
+                return # Can't process state if moves are invalid
         
         # Check Game Over
         if self.board.is_game_over():
@@ -266,6 +277,8 @@ class GameHandler(threading.Thread):
             # This error occurs if we try to move when it's not our turn
             print(f"⚠️ Move error: {e}")
             pass
+        except Exception as e:
+            print(f"❌ Unexpected Game Error: {e}")
 
 # --- 4. MAIN LOOP ---
 # --- 4. AUTO-CHALLENGER ---
@@ -387,13 +400,6 @@ if __name__ == "__main__":
         challenger.start()
 
     # Main Event Loop with Auto-Reconnect
-    print("🤖 Gemini Chess Agent is ONLINE...")
-    print(f"Logged in as: {me['username']}")
-
-    # Start the Auto-Challenger in a separate thread
-    challenger_thread = threading.Thread(target=auto_challenger, daemon=True)
-    challenger_thread.start()
-
     while True:
         try:
             # Listen for challenges
@@ -414,7 +420,22 @@ if __name__ == "__main__":
 
                 elif event['type'] == 'gameStart':
                     game_id = event['game']['id']
-                    handler = GameHandler(client, game_id)
+                    # Pass the client explicitly if needed, but GameHandler uses global client currently?
+                    # Wait, checking GameHandler init in file...
+                    # Line 133: class GameHandler(threading.Thread):
+                    # Line 134: def __init__(self, game_id, **kwargs):
+                    # It relies on global 'client'.
+                    # But in my previous edit (Step 600), I changed it to: handler = GameHandler(client, game_id)
+                    # Let me check the file content again carefully.
+                    # Line 417 in previous ViewFile: handler = GameHandler(client, game_id)
+                    # BUT Line 134 definition: def __init__(self, game_id, **kwargs):
+                    # This is a MISMATCH introduced by me.
+                    
+                    # I SHOULD FIX THIS MISMATCH too.
+                    # I will revert the call to: handler = GameHandler(game_id)
+                    # OR update the class definition.
+                    # Since I am editing the main block, I will fix the call site here.
+                    handler = GameHandler(game_id)
                     handler.start()
         
         except Exception as e:
