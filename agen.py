@@ -386,23 +386,38 @@ if __name__ == "__main__":
         challenger = ChallengeManager(me['username'])
         challenger.start()
 
-    # Listen for challenges
-    for event in client.bots.stream_incoming_events():
-        if event['type'] == 'challenge':
-            challenger_name = event['challenge']['challenger']['name']
-            
-            # Don't try to accept our own challenges (if that ever happens)
-            if challenger_name.lower() == me['username'].lower():
-                print(f"Skipping self-challenge event.")
-                continue
+    # Main Event Loop with Auto-Reconnect
+    print("🤖 Gemini Chess Agent is ONLINE...")
+    print(f"Logged in as: {me['username']}")
 
-            print(f"🛡️ Challenge from {challenger_name}! Accepting...")
-            try:
-                client.bots.accept_challenge(event['challenge']['id'])
-            except Exception as e:
-                print(f"Could not accept challenge: {e}")
-            
-        elif event['type'] == 'gameStart':
-            # Start a new thread for this game
-            game_thread = GameHandler(event['game']['id'])
-            game_thread.start()
+    # Start the Auto-Challenger in a separate thread
+    challenger_thread = threading.Thread(target=auto_challenger, daemon=True)
+    challenger_thread.start()
+
+    while True:
+        try:
+            # Listen for challenges
+            for event in client.bots.stream_incoming_events():
+                if event['type'] == 'challenge':
+                    challenger_name = event['challenge']['challenger']['name']
+                    
+                    # Don't try to accept our own challenges (if that ever happens)
+                    if challenger_name.lower() == me['username'].lower():
+                        print(f"Skipping self-challenge event.")
+                        continue
+
+                    print(f"🛡️ Challenge from {challenger_name}! Accepting...")
+                    try:
+                        client.bots.accept_challenge(event['challenge']['id'])
+                    except Exception as e:
+                        print(f"Could not accept challenge: {e}")
+
+                elif event['type'] == 'gameStart':
+                    game_id = event['game']['id']
+                    handler = GameHandler(client, game_id)
+                    handler.start()
+        
+        except Exception as e:
+            print(f"⚠️ Connection lost: {e}")
+            print("🔄 Reconnecting in 5 seconds...")
+            time.sleep(5)
